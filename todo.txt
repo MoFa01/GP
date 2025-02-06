@@ -1,0 +1,7 @@
+1 saving the vidoe local ->>>>>>
+temp_video_path = os.path.join(UPLOAD_FOLDER, "input_video.mp4")
+    file.save(temp_video_path)
+<<<<<<<<<<<<<<<<<<<<<<<
+
+
+

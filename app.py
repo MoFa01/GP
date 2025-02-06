@@ -5,33 +5,25 @@ import cv2
 import os
 import datetime
 from werkzeug.utils import secure_filename  # For secure filenames
-
+from PIL import Image
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from tensorflow.keras.models import Model
 
 app = Flask(__name__)
 
-# Load the model
 MODEL_PATH = "Combined_xception_best.keras"
 model = tf.keras.models.load_model(MODEL_PATH)
 
-# Ensure the image size matches the model's expected input shape
 IMAGE_SIZE = (256, 256)  # Model expects (None, 256, 256, 3)
 UPLOAD_FOLDER = "gradcam_outputs"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)  # Ensure output folder exists
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)  
 
-def preprocess_image(image_path):
-    """Load and preprocess an image."""
-    img = load_img(image_path, target_size=IMAGE_SIZE)
-    img_array = img_to_array(img) / 255.0  # Normalize (0-1 scaling)
-    img_array = np.expand_dims(img_array, axis=0)  # Expand dimensions for batch
-    return img_array
 
-def generate_gradcam(image_path, model, last_conv_layer_name="block14_sepconv2_act"):
-    """Generate a Grad-CAM heatmap for the given image."""
+def generate_gradcam(image, model, last_conv_layer_name="block14_sepconv2_act"):
+    """Generate a Grad-CAM heatmap for a given image (without using a file path)."""
     
-    # Load and preprocess image
-    img_array = preprocess_image(image_path)
+    # Preprocess image (ensure it's correctly formatted for model input)
+    img_array = preprocess_pil_image(image)
 
     # Identify the last convolutional layer
     grad_model = Model(
@@ -57,12 +49,12 @@ def generate_gradcam(image_path, model, last_conv_layer_name="block14_sepconv2_a
     # Convert TensorFlow tensor to NumPy array explicitly
     heatmap = heatmap.numpy() if isinstance(heatmap, tf.Tensor) else heatmap  
 
-    # Load original image
-    img = cv2.imread(image_path)
-    img = cv2.resize(img, IMAGE_SIZE)
+    # Convert PIL Image to NumPy array for heatmap overlay
+    img = np.array(image)  # Convert PIL image to NumPy array
+    img = cv2.resize(img, IMAGE_SIZE)  # Ensure it's the correct size
 
     # Resize heatmap to match image size
-    heatmap = cv2.resize(heatmap, (img.shape[1], img.shape[0]))  # ✅ Fixed
+    heatmap = cv2.resize(heatmap, (img.shape[1], img.shape[0]))
 
     # Convert heatmap to color
     heatmap = np.uint8(255 * heatmap)
@@ -72,10 +64,11 @@ def generate_gradcam(image_path, model, last_conv_layer_name="block14_sepconv2_a
     superimposed_img = cv2.addWeighted(img, 0.6, heatmap, 0.4, 0)
 
     # Save Grad-CAM output
-    gradcam_path = os.path.join(UPLOAD_FOLDER, os.path.basename(image_path))
+    gradcam_filename = f"gradcam_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+    gradcam_path = os.path.join(UPLOAD_FOLDER, gradcam_filename)
     cv2.imwrite(gradcam_path, superimposed_img)
 
-    return gradcam_path
+    return gradcam_path  # Return the saved file path
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -83,29 +76,22 @@ def predict():
         return jsonify({"error": "No file provided"}), 400
 
     file = request.files['file']
-    # 1. Secure the original filename (important!)
     original_filename = secure_filename(file.filename)
 
-    # 2. Get current timestamp for uniqueness
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")  # YearMonthDayHourMinuteSecond
-
-    # 3. Create the new filename (file name + timestamp + extension)
-    name, ext = os.path.splitext(original_filename) # Split name and extension
-    new_filename = f"{name}_{timestamp}{ext}"  # or name + "_" + timestamp + ext
-
-    temp_file_path = os.path.join(UPLOAD_FOLDER, new_filename)
-    file.save(temp_file_path)
+    # Open the image as a PIL Image
+    image = Image.open(file.stream).convert("RGB")  # Convert to RGB to ensure correct format
 
     try:
-        img_array = preprocess_image(temp_file_path)
+        # Preprocess image
+        img_array = preprocess_pil_image(image)
         prediction = model.predict(img_array)[0][0]  # Extract single value
 
         # Determine Real/Fake
         label = "Real" if prediction >= 0.5 else "Fake"
         confidence = round(prediction * 100, 2) if label == "Real" else round((1 - prediction) * 100, 2)
 
-        # Generate Grad-CAM
-        gradcam_path = generate_gradcam(temp_file_path, model)
+        # Generate Grad-CAM using in-memory image
+        gradcam_path = generate_gradcam(image, model)
 
         return jsonify({
             "prediction": label,
@@ -126,13 +112,23 @@ FRAME_EXTRACT_RATE = 10   # Extract every 10th frame to reduce processing time
 fake_frames_dir = "fake_frames"
 os.makedirs(fake_frames_dir, exist_ok=True)
 
-def preprocess_frame(frame):
-    """Preprocess a single video frame for model prediction."""
-    frame = cv2.resize(frame, IMAGE_SIZE)  # Resize to model's input size
-    frame = img_to_array(frame) / 255.0    # Normalize pixel values
-    frame = np.expand_dims(frame, axis=0)  # Expand dimensions for batch
-    return frame
 
+
+def frame_to_image(frame):
+    """Convert an OpenCV video frame to a PIL image (without saving it)."""
+    # Convert from BGR (OpenCV format) to RGB (PIL format)
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # Convert to PIL Image (this mimics reading an image file)
+    image = Image.fromarray(frame_rgb)
+    
+    return image
+def preprocess_pil_image(image):
+    """Preprocess a PIL Image to match model input."""
+    image = image.resize(IMAGE_SIZE)  # Resize to (256, 256)
+    img_array = img_to_array(image) / 255.0  # Normalize
+    img_array = np.expand_dims(img_array, axis=0)  # Add batch dimension
+    return img_array
 def analyze_video(video_path):
     """Extract frames from video and classify each frame."""
     cap = cv2.VideoCapture(video_path)
@@ -147,7 +143,9 @@ def analyze_video(video_path):
             break  # Stop if video ends
 
         if frame_count % FRAME_EXTRACT_RATE == 0:  # Process every Nth frame
-            processed_frame = preprocess_frame(frame)
+            image = frame_to_image(frame)
+            processed_frame = preprocess_pil_image(image)
+            
             prediction = model.predict(processed_frame)[0][0]  # Get probability
             
             label = "Real" if prediction >= 0.5 else "Fake"
@@ -165,7 +163,6 @@ def analyze_video(video_path):
 
     cap.release()
 
-    # Calculate percentages
     total_analyzed = fake_count + real_count
     fake_percentage = round((fake_count / total_analyzed) * 100, 2) if total_analyzed > 0 else 0
     real_percentage = round((real_count / total_analyzed) * 100, 2) if total_analyzed > 0 else 0
@@ -174,7 +171,6 @@ def analyze_video(video_path):
         "total_frames_analyzed": total_analyzed,
         "fake_percentage": fake_percentage,
         "real_percentage": real_percentage,
-        "sample_results": frame_results[:5]  # Return first 5 frame results for debugging
     }
 
 @app.route('/predict_video', methods=['POST'])
