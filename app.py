@@ -120,5 +120,79 @@ def serve_gradcam(filename):
     """Serve the Grad-CAM image."""
     return send_from_directory(UPLOAD_FOLDER, filename)
 
+###########=>    VIDEOS ###
+# Constants
+FRAME_EXTRACT_RATE = 10   # Extract every 10th frame to reduce processing time
+fake_frames_dir = "fake_frames"
+os.makedirs(fake_frames_dir, exist_ok=True)
+
+def preprocess_frame(frame):
+    """Preprocess a single video frame for model prediction."""
+    frame = cv2.resize(frame, IMAGE_SIZE)  # Resize to model's input size
+    frame = img_to_array(frame) / 255.0    # Normalize pixel values
+    frame = np.expand_dims(frame, axis=0)  # Expand dimensions for batch
+    return frame
+
+def analyze_video(video_path):
+    """Extract frames from video and classify each frame."""
+    cap = cv2.VideoCapture(video_path)
+    frame_count = 0
+    fake_count = 0
+    real_count = 0
+    frame_results = []
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break  # Stop if video ends
+
+        if frame_count % FRAME_EXTRACT_RATE == 0:  # Process every Nth frame
+            processed_frame = preprocess_frame(frame)
+            prediction = model.predict(processed_frame)[0][0]  # Get probability
+            
+            label = "Real" if prediction >= 0.5 else "Fake"
+            frame_results.append({"frame": frame_count, "prediction": label})
+
+            if label == "Fake":
+                fake_count += 1
+                # Save the fake frame
+                fake_frame_filename = os.path.join(fake_frames_dir, f"frame_{frame_count}.jpg")  # or .png
+                cv2.imwrite(fake_frame_filename, frame)
+            else:
+                real_count += 1
+
+        frame_count += 1
+
+    cap.release()
+
+    # Calculate percentages
+    total_analyzed = fake_count + real_count
+    fake_percentage = round((fake_count / total_analyzed) * 100, 2) if total_analyzed > 0 else 0
+    real_percentage = round((real_count / total_analyzed) * 100, 2) if total_analyzed > 0 else 0
+
+    return {
+        "total_frames_analyzed": total_analyzed,
+        "fake_percentage": fake_percentage,
+        "real_percentage": real_percentage,
+        "sample_results": frame_results[:5]  # Return first 5 frame results for debugging
+    }
+
+@app.route('/predict_video', methods=['POST'])
+def predict_video():
+    if 'file' not in request.files:
+        return jsonify({"error": "No video file provided"}), 400
+
+    file = request.files['file']
+    temp_video_path = os.path.join(UPLOAD_FOLDER, "input_video.mp4")
+    file.save(temp_video_path)
+
+    try:
+        results = analyze_video(temp_video_path)
+        os.remove(temp_video_path)  # Cleanup uploaded file
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
