@@ -3,6 +3,9 @@ import tensorflow as tf
 import numpy as np
 import cv2
 import os
+import datetime
+from werkzeug.utils import secure_filename  # For secure filenames
+
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from tensorflow.keras.models import Model
 
@@ -80,7 +83,17 @@ def predict():
         return jsonify({"error": "No file provided"}), 400
 
     file = request.files['file']
-    temp_file_path = os.path.join(UPLOAD_FOLDER, "input.jpg")
+    # 1. Secure the original filename (important!)
+    original_filename = secure_filename(file.filename)
+
+    # 2. Get current timestamp for uniqueness
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")  # YearMonthDayHourMinuteSecond
+
+    # 3. Create the new filename (file name + timestamp + extension)
+    name, ext = os.path.splitext(original_filename) # Split name and extension
+    new_filename = f"{name}_{timestamp}{ext}"  # or name + "_" + timestamp + ext
+
+    temp_file_path = os.path.join(UPLOAD_FOLDER, new_filename)
     file.save(temp_file_path)
 
     try:
