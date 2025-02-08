@@ -8,6 +8,9 @@ from werkzeug.utils import secure_filename  # For secure filenames
 from PIL import Image
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
 from tensorflow.keras.models import Model
+import concurrent.futures
+from queue import Queue
+import time
 
 app = Flask(__name__)
 
@@ -129,49 +132,63 @@ def preprocess_pil_image(image):
     img_array = img_to_array(image) / 255.0  # Normalize
     img_array = np.expand_dims(img_array, axis=0)  # Add batch dimension
     return img_array
+
+def process_frame(frame, frame_count):
+    """Process a single frame."""
+    image = frame_to_image(frame)
+    processed_frame = preprocess_pil_image(image)
+    prediction = model.predict(processed_frame)[0][0]  # Get probability
+    label = "Real" if prediction >= 0.5 else "Fake"
+    
+    if label == "Fake":
+        fake_frame_filename = os.path.join(fake_frames_dir, f"frame_{frame_count}.jpg")
+        cv2.imwrite(fake_frame_filename, frame)
+    
+    return frame_count, label
+
 def analyze_video(video_path):
-    """Extract frames from video and classify each frame."""
+    """Extract frames from video and classify each frame using multithreading."""
     cap = cv2.VideoCapture(video_path)
     frame_count = 0
     fake_count = 0
     real_count = 0
     frame_results = []
-
+    
+    frame_queue = Queue()
+    
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break  # Stop if video ends
-
+        
         if frame_count % FRAME_EXTRACT_RATE == 0:  # Process every Nth frame
-            image = frame_to_image(frame)
-            processed_frame = preprocess_pil_image(image)
-            
-            prediction = model.predict(processed_frame)[0][0]  # Get probability
-            
-            label = "Real" if prediction >= 0.5 else "Fake"
-            frame_results.append({"frame": frame_count, "prediction": label})
-
+            frame_queue.put((frame, frame_count))
+        
+        frame_count += 1
+    
+    cap.release()
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(process_frame, frame, count): (frame, count) for frame, count in list(frame_queue.queue)}
+        
+        for future in concurrent.futures.as_completed(futures):
+            frame_number, label = future.result()
+            frame_results.append({"frame": frame_number, "prediction": label})
             if label == "Fake":
                 fake_count += 1
-                # Save the fake frame
-                fake_frame_filename = os.path.join(fake_frames_dir, f"frame_{frame_count}.jpg")  # or .png
-                cv2.imwrite(fake_frame_filename, frame)
             else:
                 real_count += 1
-
-        frame_count += 1
-
-    cap.release()
-
+    
     total_analyzed = fake_count + real_count
     fake_percentage = round((fake_count / total_analyzed) * 100, 2) if total_analyzed > 0 else 0
     real_percentage = round((real_count / total_analyzed) * 100, 2) if total_analyzed > 0 else 0
-
+    
     return {
         "total_frames_analyzed": total_analyzed,
         "fake_percentage": fake_percentage,
         "real_percentage": real_percentage,
     }
+
 
 @app.route('/predict_video', methods=['POST'])
 def predict_video():
@@ -183,8 +200,12 @@ def predict_video():
     file.save(temp_video_path)
 
     try:
+        start_time = time.time()
         results = analyze_video(temp_video_path)
         os.remove(temp_video_path)  # Cleanup uploaded file
+        end_time = time.time() 
+        elapsed_time = end_time - start_time  # Calculate elapsed time
+        print(f"Elapsed time: {elapsed_time:.2f} seconds")
         return jsonify(results)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
