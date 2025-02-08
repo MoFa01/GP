@@ -196,7 +196,11 @@ def predict_video():
         return jsonify({"error": "No video file provided"}), 400
 
     file = request.files['file']
-    temp_video_path = os.path.join(UPLOAD_FOLDER, "input_video.mp4")
+    current_time = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+    original_filename = file.filename
+    new_filename = f"{current_time}_{original_filename}"
+    temp_video_path = os.path.join(UPLOAD_FOLDER, new_filename)
+
     file.save(temp_video_path)
 
     try:
