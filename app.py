@@ -109,6 +109,61 @@ def predict():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+from PIL import Image
+from io import BytesIO
+import requests
+
+@app.route('/predict_url', methods=['POST'])
+def predict_url():
+    # Get image URL from JSON request
+    data = request.get_json()
+    
+    # Check if image URL is provided
+    if 'image_url' not in data:
+        return jsonify({"error": "No image URL provided"}), 400
+    
+    image_url = data['image_url']
+    
+    try:
+        # Download the image from the URL
+        response = requests.get(image_url)
+        
+        # Check if the request was successful
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to download image"}), 400
+        
+        # Open the image from the downloaded content
+        image = Image.open(BytesIO(response.content)).convert("RGB")
+        
+        # Preprocess image
+        img_array = preprocess_pil_image(image)
+        
+        # Make prediction
+        prediction = model.predict(img_array)[0][0]  # Extract single value
+        
+        # Determine Real/Fake
+        label = "Real" if prediction >= 0.5 else "Fake"
+        confidence = round(prediction * 100, 2) if label == "Real" else round((1 - prediction) * 100, 2)
+        
+        # Generate Grad-CAM using in-memory image
+        gradcam_path = generate_gradcam(image, model)
+        
+        return jsonify({
+            "prediction": label,
+            "confidence": f"{confidence}%",
+            "gradcam_url": f"http://127.0.0.1:5000/gradcam/{os.path.basename(gradcam_path)}"
+        })
+    
+    except requests.RequestException as e:
+        return jsonify({"error": f"Network error: {str(e)}"}), 500
+    
+    except Image.UnidentifiedImageError:
+        return jsonify({"error": "Invalid image format"}), 400
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/gradcam/<filename>', methods=['GET'])
 def serve_gradcam(filename):
     """Serve the Grad-CAM image."""
