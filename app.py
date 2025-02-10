@@ -11,10 +11,15 @@ from tensorflow.keras.models import Model
 import concurrent.futures
 from queue import Queue
 import time
+from flask_cors import CORS
+
 
 app = Flask(__name__)
+CORS(app)
 
-MODEL_PATH = "Combined_xception_best.keras"
+#MODEL_PATH = "Combined_xception_best.keras"
+MODEL_PATH = "FinalDF_xception_model.keras"
+
 model = tf.keras.models.load_model(MODEL_PATH)
 
 IMAGE_SIZE = (256, 256)  # Model expects (None, 256, 256, 3)
