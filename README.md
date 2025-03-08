@@ -1,5 +1,3 @@
-
-```markdown
 # Deep Fake Detection for Images and Videos
 
 
@@ -47,7 +45,4 @@ This project utilizes the following deep learning models for detection:
 
 - **Xception Model** → [Download Here](https://www.kaggle.com/code/abdelrahmantarekm/xception-final-df/output)
 - **Swin Model** → [Download Here](https://www.kaggle.com/code/abdelrahmanhesham101/swin-transformer/output?scriptVersionId=224698098)
-
-## API Documentation
-You can find the API documentation [here](https://documenter.getpostman.com/view/24694319/2sAYX9o1Vj).
 
